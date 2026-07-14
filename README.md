@@ -1,6 +1,6 @@
 # Medical Relation Extraction on n2c2 2010 (English & Vietnamese)
 
-Dự án này tập trung vào bài toán **Trích xuất Quan hệ Y khoa (Medical Relation Extraction)** trên bộ dữ liệu **n2c2 2010** cho cả hai ngôn ngữ **Tiếng Anh** và **Tiếng Việt**. Dự án được xây dựng với cấu trúc mô-đun hóa cao, dễ dàng cấu hình và tối ưu hóa hiệu năng huấn luyện bằng cách hỗ trợ chạy song song trên **Multi-GPU (2x Tesla T4)** thông qua thư viện `accelerate`.
+Dự án này tập trung vào bài toán **Trích xuất Quan hệ Y khoa (Medical Relation Extraction)** trên bộ dữ liệu **n2c2 2010** cho cả hai ngôn ngữ **Tiếng Anh** và **Tiếng Việt**.
 
 ---
 
@@ -62,7 +62,7 @@ pip install -r requirements.txt
 ## 🚀 Hướng dẫn chạy từng bước
 
 ### Bước 1: Chuẩn bị cấu hình
-Các tham số huấn luyện (như epochs, batch size, learning rate, paths) đều được quản lý tập trung thông qua các file YAML trong thư mục `configs/` và **không được hardcode** trong mã nguồn.
+Các tham số huấn luyện (như epochs, batch size, learning rate, paths) đều được quản lý tập trung thông qua các file YAML trong thư mục `configs/`.
 
 *   Để huấn luyện **Tiếng Anh**: Sử dụng [configs/train.yaml](file:///c:/lab/vi_medical_re/configs/train.yaml) (sử dụng mô hình gốc `dmis-lab/biobert-base-cased-v1.2`).
 *   Để huấn luyện **Tiếng Việt**: Sử dụng [configs/train_vi.yaml](file:///c:/lab/vi_medical_re/configs/train_vi.yaml) (sử dụng mô hình đa ngôn ngữ `xlm-roberta-base`).
@@ -117,7 +117,7 @@ Kết quả báo cáo phân loại chi tiết (Classification Report) và các c
 
 ### 📓 Chạy trên Kaggle Notebook
 
-Dự án cung cấp file notebook điều khiển [kaggle_train.ipynb](file:///c:/lab/vi_medical_re/notebooks/kaggle_train.ipynb) để bạn có thể import trực tiếp vào Kaggle và chạy trên môi trường **2x NVIDIA Tesla T4**.
+Dự án cung cấp file notebook điều khiển [kaggle_train.ipynb](file:///c:/lab/vi_medical_re/notebooks/kaggle_train.ipynb) để có thể import trực tiếp vào Kaggle và chạy trên môi trường **2x NVIDIA Tesla T4**.
 
 Quy trình hoạt động trong notebook:
 1.  Cài đặt môi trường từ [requirements.txt](file:///c:/lab/vi_medical_re/requirements.txt).
