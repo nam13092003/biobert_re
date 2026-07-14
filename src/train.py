@@ -40,17 +40,26 @@ def main():
     # Set random seed for reproducibility
     set_seed(config.get("seed", 42))
     
-    # Initialize Tokenizer & download model config/weights first on main process to prevent distributed locks
+    # Initialize Accelerator to check process status
     from accelerate import Accelerator
-    from transformers import AutoModelForSequenceClassification
+    accelerator = Accelerator()
+    is_main = accelerator.is_local_main_process
     
+    # Download model config/weights first on main process
+    from transformers import AutoModelForSequenceClassification
     model_name_or_path = config.get("model_name_or_path", "dmis-lab/biobert-base-cased-v1.2")
     
-    accelerator = Accelerator()
-    with accelerator.local_main_process_first():
-        tokenizer = AutoTokenizer.from_pretrained(model_name_or_path)
-        # Pre-download model weights/config to Hugging Face cache on the local main process
+    if is_main:
+        print("Main process downloading model and tokenizer...")
+        AutoTokenizer.from_pretrained(model_name_or_path)
         AutoModelForSequenceClassification.from_pretrained(model_name_or_path)
+        print("Model and tokenizer download complete.")
+    
+    # Synchronize all processes before loading tokenizer and model
+    accelerator.wait_for_everyone()
+    
+    # Non-main processes read locally/offline from the populated cache
+    tokenizer = AutoTokenizer.from_pretrained(model_name_or_path, local_files_only=not is_main)
     
     # Load Datasets
     max_seq_length = config.get("max_seq_length", 128)
@@ -71,10 +80,10 @@ def main():
         is_train=False
     )
     
-    # Load Model
+    # Load Model (non-main processes read offline from the cache)
     print("Initializing BioBERT model...")
     num_labels = 9  # 8 relation classes + 1 false class
-    model = get_model(model_name_or_path, num_labels=num_labels)
+    model = get_model(model_name_or_path, num_labels=num_labels, local_files_only=not is_main)
     
     # Check if we should automatically resume
     resume_flag = args.resume_from_checkpoint
