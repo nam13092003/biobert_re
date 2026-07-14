@@ -206,10 +206,10 @@ class Trainer:
                 loss = outputs.loss
                 logits = outputs.logits
                 
-                # Gather loss and predictions across processes
-                losses = self.accelerator.gather(loss.repeat(batch["input_ids"].size(0)))
-                preds = self.accelerator.gather(logits.argmax(dim=-1))
-                labels = self.accelerator.gather(batch["labels"])
+                # Gather loss and predictions across processes using gather_for_metrics to handle padding correctly
+                losses = self.accelerator.gather_for_metrics(loss.repeat(batch["input_ids"].size(0)))
+                preds = self.accelerator.gather_for_metrics(logits.argmax(dim=-1))
+                labels = self.accelerator.gather_for_metrics(batch["labels"])
                 
                 total_eval_loss += losses.sum().item()
                 correct_predictions += (preds == labels).sum().item()

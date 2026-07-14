@@ -13,7 +13,6 @@ logs/
 outputs/
 experiment_backup.tar.gz
 
-# Environment
 __pycache__/
 *.pyc
 .ipynb_checkpoints/

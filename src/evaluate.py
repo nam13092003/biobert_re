@@ -132,9 +132,9 @@ def main():
             outputs = model(**batch)
             logits = outputs.logits
             
-            # Gather predictions and labels across distributed GPUs
-            preds = accelerator.gather(logits.argmax(dim=-1))
-            labels = accelerator.gather(batch["labels"])
+            # Gather predictions and labels across distributed GPUs using gather_for_metrics to handle padding correctly
+            preds = accelerator.gather_for_metrics(logits.argmax(dim=-1))
+            labels = accelerator.gather_for_metrics(batch["labels"])
             
             all_preds.extend(preds.cpu().numpy().tolist())
             all_labels.extend(labels.cpu().numpy().tolist())
