@@ -40,9 +40,17 @@ def main():
     # Set random seed for reproducibility
     set_seed(config.get("seed", 42))
     
-    # Initialize Tokenizer
+    # Initialize Tokenizer & download model config/weights first on main process to prevent distributed locks
+    from accelerate import Accelerator
+    from transformers import AutoModelForSequenceClassification
+    
     model_name_or_path = config.get("model_name_or_path", "dmis-lab/biobert-base-cased-v1.2")
-    tokenizer = AutoTokenizer.from_pretrained(model_name_or_path)
+    
+    accelerator = Accelerator()
+    with accelerator.local_main_process_first():
+        tokenizer = AutoTokenizer.from_pretrained(model_name_or_path)
+        # Pre-download model weights/config to Hugging Face cache on the local main process
+        AutoModelForSequenceClassification.from_pretrained(model_name_or_path)
     
     # Load Datasets
     max_seq_length = config.get("max_seq_length", 128)

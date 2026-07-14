@@ -71,9 +71,14 @@ def main():
     # Initialize Accelerator for proper device management (GPU/Multi-GPU)
     accelerator = Accelerator()
     
-    # Initialize Tokenizer
+    # Initialize Tokenizer & download model config/weights first on main process to prevent distributed locks
+    from transformers import AutoModelForSequenceClassification
     model_name_or_path = config.get("model_name_or_path", "dmis-lab/biobert-base-cased-v1.2")
-    tokenizer = AutoTokenizer.from_pretrained(model_name_or_path)
+    
+    with accelerator.local_main_process_first():
+        tokenizer = AutoTokenizer.from_pretrained(model_name_or_path)
+        # Pre-download model weights/config to Hugging Face cache on the local main process
+        AutoModelForSequenceClassification.from_pretrained(model_name_or_path)
     
     # Load Test Dataset
     max_seq_length = config.get("max_seq_length", 128)
