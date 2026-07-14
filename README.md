@@ -86,11 +86,11 @@ Sử dụng trực tiếp lệnh Python thông thường:
 Sử dụng thư viện `accelerate` để phân phối tải tự động trên các card đồ họa:
 *   **Huấn luyện Tiếng Anh:**
     ```bash
-    accelerate launch --config_file accelerate_config.yaml src/train.py --config configs/train.yaml
+    accelerate launch --num_processes 2 src/train.py --config configs/train.yaml
     ```
 *   **Huấn luyện Tiếng Việt:**
     ```bash
-    accelerate launch --config_file accelerate_config.yaml src/train.py --config configs/train_vi.yaml
+    accelerate launch --num_processes 2 src/train.py --config configs/train_vi.yaml
     ```
 
 > [!TIP]

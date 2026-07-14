@@ -19,8 +19,8 @@ def download_model_on_main(model_name_or_path: str):
     """
     print("Main process: downloading model and tokenizer to cache...")
     AutoTokenizer.from_pretrained(model_name_or_path)
-    AutoConfig.from_pretrained(model_name_or_path)
-    AutoModelForSequenceClassification.from_pretrained(model_name_or_path)
+    AutoConfig.from_pretrained(model_name_or_path, num_labels=9)
+    AutoModelForSequenceClassification.from_pretrained(model_name_or_path, num_labels=9)
     print("Main process: download complete.")
 
 
@@ -36,6 +36,12 @@ def main():
         "--resume_from_checkpoint", 
         action="store_true", 
         help="Whether to resume training from the latest checkpoint."
+    )
+    parser.add_argument(
+        "--num_processes", 
+        type=int, 
+        default=2, 
+        help="Number of GPUs/processes for training."
     )
     args = parser.parse_args()
     
@@ -77,9 +83,8 @@ def main():
     
     accelerator.wait_for_everyone()
     
-    # All processes load from cache (no local_files_only flag needed
-    # because the cache is guaranteed to be populated after the barrier)
-    tokenizer = AutoTokenizer.from_pretrained(model_name_or_path)
+    # All processes load from cache (local_files_only=True completely prevents network/filelock deadlocks)
+    tokenizer = AutoTokenizer.from_pretrained(model_name_or_path, local_files_only=True)
     
     # Load Datasets
     max_seq_length = config.get("max_seq_length", 128)
@@ -108,7 +113,8 @@ def main():
     num_labels = 9  # 8 relation classes + 1 false class
     model = AutoModelForSequenceClassification.from_pretrained(
         model_name_or_path,
-        num_labels=num_labels
+        num_labels=num_labels,
+        local_files_only=True
     )
     
     # Assign the loaded objects to the trainer

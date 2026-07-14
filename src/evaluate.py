@@ -54,6 +54,12 @@ def main():
         default="configs/eval.yaml", 
         help="Path to the evaluation configuration YAML file."
     )
+    parser.add_argument(
+        "--num_processes", 
+        type=int, 
+        default=2, 
+        help="Number of GPUs/processes for evaluation."
+    )
     args = parser.parse_args()
     
     # Load configuration
@@ -74,20 +80,21 @@ def main():
     
     # ---------------------------------------------------------------
     # Download guard: main process downloads first, then all processes
-    # load from the now-populated cache. No local_files_only needed.
+    # load from the now-populated cache.
     # ---------------------------------------------------------------
+    num_labels = 9
     if is_main:
         logger.info("Main process downloading model and tokenizer to cache...")
         AutoTokenizer.from_pretrained(model_name_or_path)
-        AutoConfig.from_pretrained(model_name_or_path)
-        AutoModelForSequenceClassification.from_pretrained(model_name_or_path)
+        AutoConfig.from_pretrained(model_name_or_path, num_labels=num_labels)
+        AutoModelForSequenceClassification.from_pretrained(model_name_or_path, num_labels=num_labels)
         logger.info("Model and tokenizer download complete.")
         
     # Synchronize all processes before loading tokenizer and model
     accelerator.wait_for_everyone()
     
-    # All processes load from the populated cache
-    tokenizer = AutoTokenizer.from_pretrained(model_name_or_path)
+    # All processes load from the populated cache (local_files_only=True completely prevents network/filelock deadlocks)
+    tokenizer = AutoTokenizer.from_pretrained(model_name_or_path, local_files_only=True)
     
     # Load Test Dataset
     max_seq_length = config.get("max_seq_length", 128)
@@ -108,11 +115,11 @@ def main():
     )
     
     # Load Model – all processes load from the populated cache
-    num_labels = 9
     logger.info("Initializing model architecture...")
     model = AutoModelForSequenceClassification.from_pretrained(
         model_name_or_path,
-        num_labels=num_labels
+        num_labels=num_labels,
+        local_files_only=True
     )
     
     # Prepare Dataloader and Model with accelerator
