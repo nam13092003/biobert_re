@@ -19,7 +19,7 @@ class Trainer:
         self.train_dataset = train_dataset
         self.dev_dataset = dev_dataset
         
-        # Initialize Accelerator
+        # Initialize Accelerator (single instance for the entire process)
         self.accelerator = Accelerator(
             gradient_accumulation_steps=config.get("gradient_accumulation_steps", 1),
             mixed_precision=config.get("mixed_precision", "fp16")
@@ -159,18 +159,19 @@ class Trainer:
         self.logger.info("Training completed successfully.")
 
     def _save_checkpoint(self, epoch: int, step: int):
+        # save_state MUST be called on ALL processes – it handles
+        # internal synchronisation and per-rank saving automatically.
+        checkpoint_name = f"checkpoint-{step}"
+        ckpt_path = os.path.join(self.checkpoint_dir, checkpoint_name)
+        latest_path = os.path.join(self.checkpoint_dir, "latest")
+
         self.accelerator.wait_for_everyone()
+
+        self.logger.info(f"Saving checkpoint state to {ckpt_path}...")
+        self.accelerator.save_state(ckpt_path)
+
+        # Only the main process writes extra metadata / copies files
         if self.accelerator.is_local_main_process:
-            # Create checkpoint directories
-            checkpoint_name = f"checkpoint-{step}"
-            ckpt_path = os.path.join(self.checkpoint_dir, checkpoint_name)
-            latest_path = os.path.join(self.checkpoint_dir, "latest")
-            
-            # Save via Accelerator state
-            self.logger.info(f"Saving checkpoint state to {ckpt_path}...")
-            self.accelerator.save_state(ckpt_path)
-            
-            # Save custom metadata state
             state_data = {"epoch": epoch, "step": step}
             for path in [ckpt_path, latest_path]:
                 os.makedirs(path, exist_ok=True)
@@ -180,7 +181,6 @@ class Trainer:
                 shutil.copy(self.config["config_file_path"], os.path.join(path, "config.yaml"))
             
             # Recreate checkpoints/latest to point to the newest save
-            # We copy checkpoint-XXXX contents to checkpoints/latest
             self.logger.info("Updating latest checkpoint pointer...")
             for item in os.listdir(ckpt_path):
                 s = os.path.join(ckpt_path, item)

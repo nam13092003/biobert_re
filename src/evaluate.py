@@ -6,7 +6,7 @@ import time
 import yaml
 import torch
 from torch.utils.data import DataLoader
-from transformers import AutoTokenizer
+from transformers import AutoTokenizer, AutoConfig, AutoModelForSequenceClassification
 from accelerate import Accelerator
 from sklearn.metrics import classification_report
 
@@ -14,7 +14,6 @@ from sklearn.metrics import classification_report
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from src.dataset import N2C2Dataset, INV_LABEL_MAP
-from src.model import get_model
 from src.logger import setup_logger
 
 def calculate_re_metrics(all_preds, all_labels):
@@ -70,23 +69,25 @@ def main():
     
     # Initialize Accelerator for proper device management (GPU/Multi-GPU)
     accelerator = Accelerator()
-    
-    # Download model config/weights first on main process
-    from transformers import AutoModelForSequenceClassification
-    model_name_or_path = config.get("model_name_or_path", "dmis-lab/biobert-base-cased-v1.2")
     is_main = accelerator.is_local_main_process
+    model_name_or_path = config.get("model_name_or_path", "dmis-lab/biobert-base-cased-v1.2")
     
+    # ---------------------------------------------------------------
+    # Download guard: main process downloads first, then all processes
+    # load from the now-populated cache. No local_files_only needed.
+    # ---------------------------------------------------------------
     if is_main:
-        logger.info("Main process downloading model and tokenizer...")
+        logger.info("Main process downloading model and tokenizer to cache...")
         AutoTokenizer.from_pretrained(model_name_or_path)
+        AutoConfig.from_pretrained(model_name_or_path)
         AutoModelForSequenceClassification.from_pretrained(model_name_or_path)
         logger.info("Model and tokenizer download complete.")
         
     # Synchronize all processes before loading tokenizer and model
     accelerator.wait_for_everyone()
     
-    # Non-main processes read locally/offline from the populated cache
-    tokenizer = AutoTokenizer.from_pretrained(model_name_or_path, local_files_only=not is_main)
+    # All processes load from the populated cache
+    tokenizer = AutoTokenizer.from_pretrained(model_name_or_path)
     
     # Load Test Dataset
     max_seq_length = config.get("max_seq_length", 128)
@@ -106,10 +107,13 @@ def main():
         shuffle=False
     )
     
-    # Load Model (non-main processes read offline from the cache)
+    # Load Model – all processes load from the populated cache
     num_labels = 9
     logger.info("Initializing model architecture...")
-    model = get_model(model_name_or_path, num_labels=num_labels, local_files_only=not is_main)
+    model = AutoModelForSequenceClassification.from_pretrained(
+        model_name_or_path,
+        num_labels=num_labels
+    )
     
     # Prepare Dataloader and Model with accelerator
     model, test_dataloader = accelerator.prepare(model, test_dataloader)
