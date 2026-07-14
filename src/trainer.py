@@ -107,7 +107,8 @@ class Trainer:
             progress_bar = tqdm(
                 train_dataloader, 
                 desc=f"Epoch {epoch+1}", 
-                disable=not self.accelerator.is_local_main_process
+                disable=not self.accelerator.is_local_main_process,
+                mininterval=2.0
             )
             
             for step, batch in enumerate(progress_bar):

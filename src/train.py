@@ -1,5 +1,6 @@
 import argparse
 import os
+os.environ["HF_HUB_DISABLE_PROGRESS_BARS"] = "1"
 import sys
 import yaml
 from transformers import AutoTokenizer, AutoConfig, AutoModelForSequenceClassification
