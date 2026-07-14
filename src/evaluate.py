@@ -128,9 +128,21 @@ def main():
     
     # Load saved state
     checkpoint_path = config.get("checkpoint_path", "checkpoints/latest")
+    
+    # Rule 7a: Default to checkpoints/best if it exists and config points to checkpoints/latest
+    if checkpoint_path == "checkpoints/latest" and os.path.exists("checkpoints/best"):
+        checkpoint_path = "checkpoints/best"
+        
     logger.info(f"Loading checkpoint weights from {checkpoint_path}...")
     accelerator.load_state(checkpoint_path)
     
+    # Prepare predictions file for streaming on main process
+    predictions_file = "logs/evaluate/predictions.jsonl"
+    if accelerator.is_local_main_process:
+        os.makedirs(os.path.dirname(predictions_file), exist_ok=True)
+        # Clear/Create the file
+        open(predictions_file, "w").close()
+        
     # Evaluation loop
     model.eval()
     all_preds = []
@@ -138,6 +150,7 @@ def main():
     
     logger.info("Running inference on test dataset...")
     start_time = time.time()
+    sample_idx = 0
     
     with torch.no_grad():
         for batch in test_dataloader:
@@ -148,9 +161,33 @@ def main():
             preds = accelerator.gather_for_metrics(logits.argmax(dim=-1))
             labels = accelerator.gather_for_metrics(batch["labels"])
             
-            all_preds.extend(preds.cpu().numpy().tolist())
-            all_labels.extend(labels.cpu().numpy().tolist())
+            preds_list = preds.cpu().numpy().tolist()
+            labels_list = labels.cpu().numpy().tolist()
             
+            all_preds.extend(preds_list)
+            all_labels.extend(labels_list)
+            
+            # Stream predictions to predictions.jsonl on main process
+            if accelerator.is_local_main_process:
+                with open(predictions_file, "a", encoding="utf-8") as f_pred:
+                    for i in range(len(preds_list)):
+                        global_idx = sample_idx + i
+                        example = test_dataset.examples[global_idx]
+                        pred_id = preds_list[i]
+                        label_id = labels_list[i]
+                        
+                        record = {
+                            "id": f"sample_{global_idx:04d}",
+                            "checkpoint": checkpoint_path,
+                            "input": example["text"],
+                            "label": INV_LABEL_MAP[label_id],
+                            "prediction": INV_LABEL_MAP[pred_id],
+                            "score": None,
+                            "correct": bool(pred_id == label_id)
+                        }
+                        f_pred.write(json.dumps(record, ensure_ascii=False) + "\n")
+                sample_idx += len(preds_list)
+                
     inference_time = time.time() - start_time
     
     # Calculate metrics
@@ -173,10 +210,11 @@ def main():
     logger.info(f"  Precision: {metrics['precision']:.2%} | Recall: {metrics['recall']:.2%}")
     logger.info(f"  TP: {metrics['true_positives']} | FP: {metrics['false_positives']} | FN: {metrics['false_negatives']}")
     
-    # Save results to json file
+    # Save results and copy prediction outputs
     if accelerator.is_local_main_process:
-        results_file = os.path.join(config.get("output_dir", "outputs"), "results.json")
-        os.makedirs(os.path.dirname(results_file), exist_ok=True)
+        # 1. Save results.json to logs/evaluate/
+        logs_results_file = "logs/evaluate/results.json"
+        os.makedirs(os.path.dirname(logs_results_file), exist_ok=True)
         
         results_data = {
             "checkpoint_used": checkpoint_path,
@@ -187,9 +225,24 @@ def main():
             "timestamp": time.time()
         }
         
-        with open(results_file, "w") as f:
+        with open(logs_results_file, "w", encoding="utf-8") as f:
             json.dump(results_data, f, indent=4)
-        logger.info(f"Saved evaluation metrics to {results_file}")
+            
+        # 2. Copy outputs to outputs/experiment_id/results/<checkpoint_name>/
+        import shutil
+        checkpoint_name = os.path.basename(checkpoint_path)
+        output_results_dir = os.path.join(config.get("output_dir", "outputs"), "results", checkpoint_name)
+        os.makedirs(output_results_dir, exist_ok=True)
+        
+        # Copy predictions.jsonl
+        shutil.copy(predictions_file, os.path.join(output_results_dir, "predictions.jsonl"))
+        
+        # Save results.json
+        with open(os.path.join(output_results_dir, "results.json"), "w", encoding="utf-8") as f:
+            json.dump(results_data, f, indent=4)
+            
+        logger.info(f"Saved evaluation metrics to {logs_results_file} and {output_results_dir}")
+        logger.info(f"Predictions saved to {predictions_file} and copied to {output_results_dir}")
 
 if __name__ == "__main__":
     main()

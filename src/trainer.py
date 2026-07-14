@@ -36,8 +36,19 @@ class Trainer:
         self.max_grad_norm = config.get("max_grad_norm", 1.0)
         self.save_steps = config.get("save_steps", 500)
         self.eval_steps = config.get("eval_steps", 500)
+        self.save_total_limit = config.get("save_total_limit", None)
         self.checkpoint_dir = config.get("checkpoint_dir", "checkpoints")
         self.output_dir = config.get("output_dir", "outputs")
+        
+        # Best model tracking setup
+        self.metric_for_best_model = config.get("metric_for_best_model", "val_loss")
+        self.greater_is_better = config.get("greater_is_better", False)
+        if self.greater_is_better:
+            self.best_metric_value = float("-inf")
+        else:
+            self.best_metric_value = float("inf")
+        self.best_checkpoint_step = None
+        self.best_checkpoint_epoch = None
         
         os.makedirs(self.checkpoint_dir, exist_ok=True)
         os.makedirs(self.output_dir, exist_ok=True)
@@ -89,6 +100,19 @@ class Trainer:
                         start_epoch = state_data.get("epoch", 0)
                         global_step = state_data.get("step", 0)
                 self.logger.info(f"Resumed at epoch {start_epoch}, step {global_step}")
+                
+                # Load best metric state to avoid overwriting a better checkpoint
+                best_metric_file = os.path.join(self.checkpoint_dir, "best", "best_metric.json")
+                if os.path.exists(best_metric_file):
+                    try:
+                        with open(best_metric_file, "r") as f:
+                            best_data = json.load(f)
+                            self.best_metric_value = best_data.get("metric_value", self.best_metric_value)
+                            self.best_checkpoint_step = best_data.get("step", None)
+                            self.best_checkpoint_epoch = best_data.get("epoch", None)
+                        self.logger.info(f"Loaded best checkpoint metric tracking: {self.best_metric_value} at step {self.best_checkpoint_step}")
+                    except Exception as e:
+                        self.logger.warning(f"Failed to load best_metric.json: {e}")
             else:
                 self.logger.warning("Resume requested but checkpoints/latest does not exist. Starting from scratch.")
 
@@ -149,7 +173,7 @@ class Trainer:
                     
                 # Evaluate periodically
                 if global_step % self.eval_steps == 0:
-                    self.evaluate(dev_dataloader, global_step)
+                    self.evaluate(dev_dataloader, global_step, epoch=epoch+1)
                     self.model.train() # Make sure to switch back to training mode
             
             avg_loss = epoch_loss / len(train_dataloader)
@@ -192,8 +216,30 @@ class Trainer:
                     shutil.copytree(s, d)
                 else:
                     shutil.copy2(s, d)
+                    
+            # Rotate checkpoints (only keep latest save_total_limit checkpoints)
+            if self.save_total_limit is not None and self.save_total_limit > 0:
+                import re
+                checkpoint_dirs = []
+                for item in os.listdir(self.checkpoint_dir):
+                    item_path = os.path.join(self.checkpoint_dir, item)
+                    if os.path.isdir(item_path) and re.match(r"^checkpoint-\d+$", item):
+                        checkpoint_dirs.append(item_path)
+                
+                # Sort checkpoints by their step number
+                checkpoint_dirs = sorted(checkpoint_dirs, key=lambda x: int(re.search(r"checkpoint-(\d+)", x).group(1)))
+                
+                # Delete oldest checkpoints if we exceed the limit
+                if len(checkpoint_dirs) > self.save_total_limit:
+                    to_delete = checkpoint_dirs[:-self.save_total_limit]
+                    for path in to_delete:
+                        self.logger.info(f"Deleting oldest checkpoint directory: {path}")
+                        try:
+                            shutil.rmtree(path)
+                        except Exception as e:
+                            self.logger.warning(f"Failed to delete checkpoint directory {path}: {e}")
 
-    def evaluate(self, dev_dataloader, step: int):
+    def evaluate(self, dev_dataloader, step: int, epoch: int = None):
         self.logger.info("***** Running validation evaluation *****")
         self.model.eval()
         
@@ -244,3 +290,49 @@ class Trainer:
             
             with open(metrics_file, "w") as f:
                 json.dump(metrics, f, indent=4)
+                
+        # Determine if this model is the best so far
+        current_metric = None
+        if self.metric_for_best_model == "val_loss":
+            current_metric = avg_eval_loss
+        elif self.metric_for_best_model == "val_accuracy":
+            current_metric = accuracy
+            
+        if current_metric is not None:
+            is_best = False
+            if self.greater_is_better:
+                if current_metric > self.best_metric_value:
+                    is_best = True
+            else:
+                if current_metric < self.best_metric_value:
+                    is_best = True
+                    
+            if is_best:
+                old_best = self.best_metric_value
+                self.best_metric_value = current_metric
+                self.best_checkpoint_step = step
+                self.best_checkpoint_epoch = epoch
+                
+                self.logger.info(
+                    f"New best model found at step {step}! "
+                    f"Old {self.metric_for_best_model}: {old_best} -> New {self.metric_for_best_model}: {current_metric}"
+                )
+                
+                # Save best checkpoint
+                best_dir = os.path.join(self.checkpoint_dir, "best")
+                self.accelerator.wait_for_everyone()
+                self.accelerator.save_state(best_dir)
+                
+                if self.accelerator.is_local_main_process:
+                    os.makedirs(best_dir, exist_ok=True)
+                    best_metric_data = {
+                        "metric_name": self.metric_for_best_model,
+                        "metric_value": float(current_metric),
+                        "step": step,
+                        "epoch": epoch,
+                        "checkpoint_source": f"checkpoint-{step}",
+                        "timestamp": time.strftime("%Y-%m-%dT%H:%M:%S")
+                    }
+                    with open(os.path.join(best_dir, "best_metric.json"), "w") as f:
+                        json.dump(best_metric_data, f, indent=4)
+                    shutil.copy(self.config["config_file_path"], os.path.join(best_dir, "config.yaml"))
