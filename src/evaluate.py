@@ -1,5 +1,6 @@
 import argparse
 import os
+import sys
 import json
 import time
 import yaml
@@ -8,6 +9,9 @@ from torch.utils.data import DataLoader
 from transformers import AutoTokenizer
 from accelerate import Accelerator
 from sklearn.metrics import classification_report
+
+# Add project root to sys.path to enable absolute imports of src
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from src.dataset import N2C2Dataset, INV_LABEL_MAP
 from src.model import get_model

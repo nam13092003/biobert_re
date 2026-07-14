@@ -1,7 +1,11 @@
 import argparse
 import os
+import sys
 import yaml
 from transformers import AutoTokenizer
+
+# Add project root to sys.path to enable absolute imports of src
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from src.utils import set_seed
 from src.dataset import N2C2Dataset
