@@ -1,0 +1,24 @@
+# Checkpoints & model weights
+checkpoints/
+*.pt
+*.bin
+*.safetensors
+*.ckpt
+
+# Logs
+logs/
+*.log
+
+# Outputs & experiment artifacts
+outputs/
+experiment_backup.tar.gz
+
+# Environment
+__pycache__/
+*.pyc
+.ipynb_checkpoints/
+venv/
+.env
+
+# Kaggle
+kaggle.json

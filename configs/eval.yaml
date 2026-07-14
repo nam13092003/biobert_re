@@ -1,0 +1,8 @@
+experiment_name: "2026_07_14_biobert_n2c2"
+model_name_or_path: "dmis-lab/biobert-base-cased-v1.2"
+test_file: "n2c2 2010/n2c2_2010_test_en.jsonl"
+batch_size: 16
+max_seq_length: 128
+checkpoint_path: "checkpoints/latest"
+output_dir: "outputs/2026_07_14_biobert_n2c2"
+log_dir: "logs"

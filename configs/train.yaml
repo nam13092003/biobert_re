@@ -1,0 +1,17 @@
+experiment_name: "2026_07_14_biobert_n2c2"
+model_name_or_path: "dmis-lab/biobert-base-cased-v1.2"
+train_file: "n2c2 2010/n2c2_2010_train_en.jsonl"
+dev_file: "n2c2 2010/n2c2_2010_test_en.jsonl"
+epochs: 5
+batch_size: 8
+learning_rate: 2e-5
+max_seq_length: 128
+gradient_accumulation_steps: 4
+max_grad_norm: 1.0
+mixed_precision: "fp16"
+save_steps: 500
+eval_steps: 500
+seed: 42
+output_dir: "outputs/2026_07_14_biobert_n2c2"
+checkpoint_dir: "checkpoints"
+log_dir: "logs"
