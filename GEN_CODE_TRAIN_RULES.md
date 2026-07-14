@@ -93,7 +93,9 @@ TRAIN_CONFIG = {
     "mixed_precision": "fp16",
     "save_steps": 500,
     "eval_steps": 500,
-    "seed": 42
+    "seed": 42,
+    "metric_for_best_model": "eval_loss",
+    "greater_is_better": false
 }
 ```
 
@@ -103,6 +105,8 @@ Sau đó notebook phải tự động ghi:
 TRAIN_CONFIG  -->  configs/train.yaml
 EVAL_CONFIG   -->  configs/eval.yaml
 ```
+
+**Lưu ý:** `metric_for_best_model` và `greater_is_better` bắt buộc phải được khai báo trong `train.yaml` vì đây là điều kiện dùng để xác định "best checkpoint" ở mục 7a.
 
 ---
 
@@ -172,8 +176,9 @@ if __name__ == "__main__":
 2. Initialize accelerator
 3. Prepare model, optimizer, dataloader
 4. Train
-5. Save checkpoint
-6. Write logs
+5. Đánh giá trên tập validation ở mỗi `eval_steps`, so sánh với `metric_for_best_model` để cập nhật best checkpoint (xem mục 7a)
+6. Save checkpoint (định kỳ + best)
+7. Write logs
 
 ---
 
@@ -192,10 +197,61 @@ if __name__ == "__main__":
 ```
 
 **Evaluation phải:**
-1. Load checkpoint
+1. Load checkpoint — **mặc định phải load `checkpoints/best`** (xem mục 7a), trừ khi người dùng chỉ định rõ checkpoint khác qua `--checkpoint_path`
 2. Inference
 3. Calculate metrics
-4. Save result
+4. Lưu kết quả prediction **cho từng bản ghi** (xem mục 6a)
+5. Save result (metrics tổng hợp)
+
+### 6a. Per-record Prediction Output Rules
+
+Ngoài metrics tổng hợp, evaluation **bắt buộc** phải lưu lại output dự đoán chi tiết cho **từng bản ghi (mỗi sample)** trong tập eval. Đây là yêu cầu bắt buộc, không tuỳ chọn.
+
+**File output:** `logs/evaluate/predictions.jsonl` (định dạng JSON Lines, mỗi dòng là một bản ghi).
+
+Mỗi dòng phải chứa tối thiểu các trường sau:
+
+```json
+{
+  "id": "sample_0001",
+  "checkpoint": "checkpoints/best",
+  "input": "...",
+  "label": "...",
+  "prediction": "...",
+  "score": 0.87,
+  "correct": true
+}
+```
+
+- `id`: định danh duy nhất của bản ghi (lấy từ dataset nếu có, nếu không phải tự sinh theo index).
+- `checkpoint`: đường dẫn checkpoint dùng để dự đoán bản ghi này, để đảm bảo truy vết được.
+- `input` / `label`: dữ liệu gốc và nhãn thật (ground truth), nếu có.
+- `prediction`: output mô hình dự đoán.
+- `score`: điểm số/metric riêng của bản ghi đó nếu áp dụng được (ví dụ confidence, loss, similarity...), có thể để `null` nếu không áp dụng.
+- `correct`: đánh giá đúng/sai ở mức bản ghi nếu bài toán cho phép (classification, exact-match...), có thể để `null` với bài toán generation tự do.
+
+**Quy tắc bắt buộc:**
+- Không được ghi đè `predictions.jsonl` của lần evaluate trước một cách âm thầm; mỗi lần evaluate phải ghi vào thư mục riêng theo `experiment_id`/`checkpoint` (xem cấu trúc dưới).
+- Việc ghi predictions phải streaming theo batch (ghi từng batch ngay khi có kết quả), không được giữ toàn bộ predictions trong RAM rồi ghi một lần, để tránh OOM trên Kaggle T4.
+
+**Cấu trúc log evaluate cập nhật:**
+
+```
+logs/
+└── evaluate/
+    ├── eval.log
+    ├── results.json          # metrics tổng hợp
+    └── predictions.jsonl     # prediction chi tiết từng bản ghi
+```
+
+Trong `outputs/experiment_id/results/`, mỗi lần evaluate cũng phải lưu bản sao gắn với checkpoint đã dùng:
+
+```
+outputs/experiment_id/results/
+└── <checkpoint_name>/
+    ├── results.json
+    └── predictions.jsonl
+```
 
 ---
 
@@ -209,6 +265,7 @@ Training bắt buộc lưu checkpoint.
 checkpoints/
 ├── checkpoint-500/
 ├── checkpoint-1000/
+├── best/
 └── latest/
 ```
 
@@ -227,6 +284,31 @@ checkpoint-XXXX/
 ├── trainer_state.json
 └── config.yaml
 ```
+
+### 7a. Best Checkpoint Rules
+
+Ngoài các checkpoint định kỳ theo `save_steps`, pipeline **bắt buộc** phải theo dõi và lưu lại checkpoint tốt nhất riêng biệt tại `checkpoints/best/`.
+
+**Yêu cầu bắt buộc:**
+- Config `train.yaml` phải khai báo `metric_for_best_model` (ví dụ `eval_loss`, `f1`, `accuracy`...) và `greater_is_better` (`true`/`false`) để xác định thế nào là "tốt hơn".
+- Sau mỗi lần chạy validation (`eval_steps`), training loop phải so sánh giá trị metric hiện tại với giá trị tốt nhất đã ghi nhận trước đó.
+- Nếu metric hiện tại tốt hơn, ghi đè `checkpoints/best/` bằng checkpoint hiện tại (đầy đủ model weights + config; optimizer/scheduler state có thể lưu tuỳ nhu cầu resume, nhưng model weights + `config.yaml` là bắt buộc).
+- Phải ghi lại một file `checkpoints/best/best_metric.json` chứa:
+
+```json
+{
+  "metric_name": "eval_loss",
+  "metric_value": 0.4123,
+  "step": 1500,
+  "epoch": 3,
+  "checkpoint_source": "checkpoint-1500",
+  "timestamp": "2026-07-15T10:00:00"
+}
+```
+
+- Việc cập nhật `checkpoints/best/` phải được ghi log rõ ràng vào `logs/train/train.log` (best metric cũ, best metric mới, step cập nhật).
+- `checkpoints/best/` không được xoá/ghi đè bởi cơ chế rotate/cleanup của các checkpoint định kỳ (`checkpoint-XXXX/`); nó là thư mục độc lập, luôn giữ bản tốt nhất tính đến thời điểm hiện tại.
+- **Evaluation (`src/evaluate.py`) mặc định phải sử dụng `checkpoints/best/`** để chạy đánh giá cuối cùng, trừ khi người dùng override bằng `--checkpoint_path` (xem mục 6).
 
 ---
 
@@ -249,6 +331,8 @@ accelerate launch \
   --resume_from_checkpoint checkpoints/latest
 ```
 
+Khi resume, trạng thái best checkpoint (`checkpoints/best/best_metric.json`) cũng phải được load lại để tránh việc một checkpoint tệ hơn ghi đè nhầm lên best hiện có.
+
 ---
 
 ## 9. Logging Rules
@@ -264,7 +348,8 @@ logs/
 │   └── metrics.json
 └── evaluate/
     ├── eval.log
-    └── results.json
+    ├── results.json
+    └── predictions.jsonl
 ```
 
 **Training log phải ghi:**
@@ -276,11 +361,13 @@ logs/
 - Learning rate
 - GPU memory
 - Checkpoint path
+- Trạng thái best checkpoint (có cập nhật hay không, metric value)
 
 **Evaluation log phải ghi:**
-- Checkpoint sử dụng
+- Checkpoint sử dụng (mặc định là `checkpoints/best`)
 - Dataset size
 - Metrics
+- Đường dẫn file `predictions.jsonl`
 - Timestamp
 
 ---
@@ -302,8 +389,12 @@ outputs/
     │   ├── train.yaml
     │   └── eval.yaml
     ├── checkpoints/
+    │   └── best/
     ├── logs/
     ├── results/
+    │   └── <checkpoint_name>/
+    │       ├── results.json
+    │       └── predictions.jsonl
     ├── git_commit.txt
     └── environment.txt
 ```
@@ -351,9 +442,9 @@ Notebook workflow bắt buộc theo đúng thứ tự:
 3. Generate `train.yaml`
 4. Generate `eval.yaml`
 5. Check checkpoint
-6. Run accelerate training
+6. Run accelerate training (bao gồm cập nhật `checkpoints/best/` theo mục 7a)
 7. Monitor logs
-8. Run evaluation
+8. Run evaluation **trên `checkpoints/best/`**, lưu `predictions.jsonl` cho từng bản ghi
 9. Backup outputs
 
 ---
@@ -363,7 +454,7 @@ Notebook workflow bắt buộc theo đúng thứ tự:
 Trước khi kết thúc Kaggle session, phải backup:
 - `outputs/`
 - `logs/`
-- `checkpoints/`
+- `checkpoints/` (bao gồm `checkpoints/best/`)
 
 ```bash
 tar -czf experiment_backup.tar.gz \
@@ -408,6 +499,9 @@ logs/
 outputs/
 experiment_backup.tar.gz
 
+# Predictions
+predictions.jsonl
+
 # Environment
 __pycache__/
 *.pyc
@@ -431,6 +525,7 @@ Khi AI chỉnh sửa repo, bắt buộc:
 - Không hardcode config.
 - Giữ backward compatibility.
 - Không phá checkpoint cũ.
+- Không phá `checkpoints/best/` đã có (chỉ được ghi đè khi metric mới thực sự tốt hơn theo mục 7a).
 - Kiểm tra accelerate compatibility.
 - Kiểm tra resume compatibility.
 - Test trước khi hoàn thành.
@@ -444,8 +539,11 @@ Pipeline chỉ được coi là hoàn thành khi đạt:
 - [x] Can run on Kaggle T4 x2
 - [x] Supports accelerate distributed training
 - [x] Saves checkpoints
+- [x] Saves best checkpoint (`checkpoints/best/`) dựa trên `metric_for_best_model`
 - [x] Produces training logs
 - [x] Produces evaluation logs
+- [x] Evaluation runs on best checkpoint by default
+- [x] Saves per-record prediction output (`predictions.jsonl`) during evaluate
 - [x] Can resume training
 - [x] Can reproduce experiment from config
 - [x] Can run from GitHub clone
