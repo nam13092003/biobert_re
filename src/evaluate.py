@@ -212,7 +212,37 @@ def main():
     
     # Save results and copy prediction outputs
     if accelerator.is_local_main_process:
-        # 1. Save results.json to logs/evaluate/
+        # 1. Map predictions by sentence_id to reconstruct original test file structure with predictions
+        predictions_by_sentence = {}
+        for idx, pred_id in enumerate(all_preds):
+            example = test_dataset.examples[idx]
+            pred_label = INV_LABEL_MAP[pred_id]
+            if pred_label != "false":
+                metadata = example["metadata"]
+                sent_id = metadata["sentence_id"]
+                if sent_id not in predictions_by_sentence:
+                    predictions_by_sentence[sent_id] = []
+                predictions_by_sentence[sent_id].append({
+                    "subject_id": metadata["ent1_id"],
+                    "object_id": metadata["ent2_id"],
+                    "label": pred_label
+                })
+
+        # 2. Reconstruct sentence-level predictions file
+        predictions_sentence_file = "logs/evaluate/predictions_sentence.jsonl"
+        with open(test_file, "r", encoding="utf-8") as f_in, \
+             open(predictions_sentence_file, "w", encoding="utf-8") as f_out:
+            for line_idx, line in enumerate(f_in):
+                if not line.strip():
+                    continue
+                data = json.loads(line)
+                
+                # Add predicted relations list for this sentence_id
+                data["predicted_relations"] = predictions_by_sentence.get(line_idx, [])
+                
+                f_out.write(json.dumps(data, ensure_ascii=False) + "\n")
+
+        # 3. Save results.json to logs/evaluate/
         logs_results_file = "logs/evaluate/results.json"
         os.makedirs(os.path.dirname(logs_results_file), exist_ok=True)
         
@@ -228,21 +258,23 @@ def main():
         with open(logs_results_file, "w", encoding="utf-8") as f:
             json.dump(results_data, f, indent=4)
             
-        # 2. Copy outputs to outputs/experiment_id/results/<checkpoint_name>/
+        # 4. Copy outputs to outputs/experiment_id/results/<checkpoint_name>/
         import shutil
         checkpoint_name = os.path.basename(checkpoint_path)
         output_results_dir = os.path.join(config.get("output_dir", "outputs"), "results", checkpoint_name)
         os.makedirs(output_results_dir, exist_ok=True)
         
-        # Copy predictions.jsonl
+        # Copy predictions.jsonl and predictions_sentence.jsonl
         shutil.copy(predictions_file, os.path.join(output_results_dir, "predictions.jsonl"))
+        shutil.copy(predictions_sentence_file, os.path.join(output_results_dir, "predictions_sentence.jsonl"))
         
         # Save results.json
         with open(os.path.join(output_results_dir, "results.json"), "w", encoding="utf-8") as f:
             json.dump(results_data, f, indent=4)
             
         logger.info(f"Saved evaluation metrics to {logs_results_file} and {output_results_dir}")
-        logger.info(f"Predictions saved to {predictions_file} and copied to {output_results_dir}")
+        logger.info(f"Pair-wise predictions saved to {predictions_file} and copied to {output_results_dir}")
+        logger.info(f"Sentence-level predictions saved to {predictions_sentence_file} and copied to {output_results_dir}")
 
 if __name__ == "__main__":
     main()
