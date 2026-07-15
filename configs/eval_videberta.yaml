@@ -1,0 +1,8 @@
+experiment_name: "2026_07_14_videberta_n2c2_vi"
+model_name_or_path: "tienld/videberta-xsmall"
+test_file: "n2c2 2010/n2c2_2010_test_vi.jsonl"
+batch_size: 16
+max_seq_length: 128
+checkpoint_path: "checkpoints/latest"
+output_dir: "outputs/2026_07_14_videberta_n2c2_vi"
+log_dir: "logs"
